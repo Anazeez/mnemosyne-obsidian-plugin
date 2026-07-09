@@ -12,6 +12,16 @@ const DEFAULT_SETTINGS = {
   reviewFolder: "System/Ariadne/Review"
 };
 
+function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, {
+    ...options,
+    signal: controller.signal
+  }).finally(() => clearTimeout(timer));
+}
+
 module.exports = class MnemosyneAriadnePlugin extends Plugin {
   async onload() {
     await this.loadSettings();
@@ -78,18 +88,29 @@ module.exports = class MnemosyneAriadnePlugin extends Plugin {
     let response;
 
     try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Matrix-Key": this.settings.ariadnePasskey,
-          "X-Ariadne-Key": this.settings.ariadnePasskey
+      response = await fetchWithTimeout(
+        endpoint,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Matrix-Key": this.settings.ariadnePasskey,
+            "X-Ariadne-Key": this.settings.ariadnePasskey
+          },
+          body: JSON.stringify(payload)
         },
-        body: JSON.stringify(payload)
-      });
+        45000
+      );
     } catch (err) {
       console.error(err);
-      new Notice("Ariadne network error: " + String(err && err.message ? err.message : err));
+
+      new Notice(
+        err && err.name === "AbortError"
+          ? "Ariadne network timeout after 45 seconds."
+          : "Ariadne network error: " +
+              String(err && err.message ? err.message : err)
+      );
+
       return;
     }
 
@@ -101,7 +122,15 @@ module.exports = class MnemosyneAriadnePlugin extends Plugin {
       return;
     }
 
-    const data = await response.json();
+    let data;
+
+    try {
+      data = await response.json();
+    } catch (err) {
+      console.error(err);
+      new Notice("Ariadne returned invalid JSON.");
+      return;
+    }
 
     if (data.mutated !== false || data.reviewFirst !== true || !data.proposal) {
       new Notice("Unsafe or invalid Ariadne response blocked.");
