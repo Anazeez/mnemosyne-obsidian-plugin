@@ -98,14 +98,26 @@ export default class MnemosyneAriadnePlugin extends Plugin {
 
     new Notice(`Ariadne ${mode} started.`);
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Matrix-Key": this.settings.ariadnePasskey
-      },
-      body: JSON.stringify(payload)
-    });
+  let response: Response;
+
+try {
+  response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Matrix-Key": this.settings.ariadnePasskey
+    },
+    body: JSON.stringify(payload)
+  });
+} catch (err) {
+  console.error(err);
+  new Notice(
+    `Ariadne network error: ${
+      err instanceof Error ? err.message : String(err)
+    }`
+  );
+  return;
+}
 
     if (!response.ok) {
       const errorText = await response.text();
