@@ -61,8 +61,7 @@ module.exports = class MnemosyneAriadnePlugin extends Plugin {
     }
 
     if (!this.settings.ariadnePasskey.trim()) {
-      new Notice("Missing Ariadne passkey. Configure plugin settings.");
-      return;
+new Notice("Missing Ariadne passkey.Configure plugin settings.");
     }
 
     const content = await this.app.vault.read(file);
