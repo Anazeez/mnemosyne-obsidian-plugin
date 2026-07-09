@@ -1,9 +1,17 @@
-const { Plugin, Notice, PluginSettingTab, Setting, TFile } = require("obsidian");
+const { Plugin, Notice, PluginSettingTab, Setting } = require("obsidian");
 
 const DEFAULT_SETTINGS = {
-  workerUrl: "",
+  workerBaseUrl: "",
   ariadnePasskey: ""
 };
+
+function sanitizeFileName(name) {
+  return String(name || "untitled")
+    .replace(/[\\/:*?"<>|#^[\]]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "untitled";
+}
 
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
@@ -19,76 +27,56 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-function sanitizeFileName(name) {
-  return String(name || "note")
-    .replace(/\.md$/i, "")
-    .replace(/[\\/:*?"<>|#^[\]]+/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 80) || "note";
+class AriadneSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Worker base URL")
+      .setDesc("Example: https://your-worker.example.workers.dev")
+      .addText(text =>
+        text
+          .setPlaceholder("https://...")
+          .setValue(this.plugin.settings.workerBaseUrl)
+          .onChange(async value => {
+            this.plugin.settings.workerBaseUrl = value.trim().replace(/\/+$/, "");
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Ariadne passkey")
+      .setDesc("Sent as both X-Matrix-Key and X-Ariadne-Key.")
+      .addText(text => {
+        text.inputEl.type = "password";
+
+        text
+          .setPlaceholder("Passkey")
+          .setValue(this.plugin.settings.ariadnePasskey)
+          .onChange(async value => {
+            this.plugin.settings.ariadnePasskey = value;
+            await this.plugin.saveSettings();
+          });
+      });
+  }
 }
 
-function formatProposalMarkdown(file, data) {
-  const proposal = data.proposal || {};
-  const timestamp = new Date().toISOString();
-
-  return [
-    "---",
-    "type: ariadne-intake-review",
-    "source: obsidian-plugin",
-    `created: ${timestamp}`,
-    `originalLocation: ${file.path}`,
-    "reviewFirst: true",
-    "mutated: false",
-    "---",
-    "",
-    "# Ariadne Intake Proposal",
-    "",
-    "## Original Note",
-    `- Path: ${file.path}`,
-    `- Name: ${file.name}`,
-    "",
-    "## Classification",
-    proposal.classification ? String(proposal.classification) : "_None returned._",
-    "",
-    "## Summary",
-    proposal.summary ? String(proposal.summary) : "_None returned._",
-    "",
-    "## Proposed Destination",
-    proposal.proposedDestination ? String(proposal.proposedDestination) : "_None returned._",
-    "",
-    "## Proposed Tags",
-    Array.isArray(proposal.proposedTags) && proposal.proposedTags.length
-      ? proposal.proposedTags.map(tag => `- ${String(tag)}`).join("\n")
-      : "_None returned._",
-    "",
-    "## Proposed Links",
-    Array.isArray(proposal.proposedLinks) && proposal.proposedLinks.length
-      ? proposal.proposedLinks.map(link => `- ${String(link)}`).join("\n")
-      : "_None returned._",
-    "",
-    "## Warnings",
-    Array.isArray(proposal.warnings) && proposal.warnings.length
-      ? proposal.warnings.map(warning => `- ${String(warning)}`).join("\n")
-      : "_None returned._",
-    "",
-    "## Raw Ariadne Response",
-    "",
-    "```json",
-    JSON.stringify(data, null, 2),
-    "```",
-    ""
-  ].join("\n");
-}
-
-module.exports = class AriadneIntakePlugin extends Plugin {
+module.exports = class MnemosyneAriadnePlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    new Notice("Ariadne plugin loaded.");
+
     this.addCommand({
       id: "ariadne-intake-current-note",
-      name: "Intake current note",
+      name: "Ariadne: Intake current note",
       callback: async () => {
         await this.intakeCurrentNote();
       }
@@ -106,47 +94,37 @@ module.exports = class AriadneIntakePlugin extends Plugin {
   }
 
   async intakeCurrentNote() {
-    const passkey = String(this.settings.ariadnePasskey || "").trim();
-    const workerUrl = String(this.settings.workerUrl || "").trim().replace(/\/+$/, "");
+    new Notice("Ariadne intake started.");
+
+    const passkey = this.settings.ariadnePasskey;
+    const baseUrl = this.settings.workerBaseUrl;
 
     if (!passkey) {
       new Notice("Missing Ariadne passkey. Configure plugin settings.");
       return;
     }
 
-    if (!workerUrl) {
+    if (!baseUrl) {
       new Notice("Missing Ariadne Worker URL. Configure plugin settings.");
       return;
     }
 
     const file = this.app.workspace.getActiveFile();
 
-    if (!file || !(file instanceof TFile) || file.extension !== "md") {
-      new Notice("Open a Markdown note before running Ariadne intake.");
+    if (!file) {
+      new Notice("No active note selected.");
       return;
     }
 
-    new Notice("Ariadne intake started.");
-
     const content = await this.app.vault.read(file);
     const title = file.basename;
-
-    const body = {
-      title,
-      content,
-      source: "obsidian-plugin",
-      metadata: {
-        vaultPath: file.path,
-        originalLocation: file.path
-      },
-      reviewFirst: true
-    };
+    const url = `${baseUrl.replace(/\/+$/, "")}/api/ariadne/core/intake`;
 
     let response;
 
     try {
       response = await fetchWithTimeout(
-        `${workerUrl}/api/ariadne/core/intake`,
+        url,
         {
           method: "POST",
           headers: {
@@ -154,17 +132,26 @@ module.exports = class AriadneIntakePlugin extends Plugin {
             "X-Matrix-Key": passkey,
             "X-Ariadne-Key": passkey
           },
-          body: JSON.stringify(body)
+          body: JSON.stringify({
+            title,
+            content,
+            source: "obsidian-plugin",
+            metadata: {
+              vaultPath: file.path,
+              originalLocation: file.path
+            },
+            reviewFirst: true
+          })
         },
         45000
       );
     } catch (error) {
       if (error && error.name === "AbortError") {
         new Notice("Ariadne network timeout after 45 seconds.");
-        return;
+      } else {
+        new Notice("Ariadne intake failed: network error");
       }
 
-      new Notice("Ariadne intake failed: network error");
       return;
     }
 
@@ -183,7 +170,6 @@ module.exports = class AriadneIntakePlugin extends Plugin {
     }
 
     if (
-      !data ||
       data.reviewFirst !== true ||
       data.mutated !== false ||
       !data.proposal ||
@@ -193,76 +179,71 @@ module.exports = class AriadneIntakePlugin extends Plugin {
       return;
     }
 
-    const reviewFolder = "System/Ariadne/Review";
-    await this.ensureFolder(reviewFolder);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safeTitle = sanitizeFileName(title);
+    const folder = "System/Ariadne/Review";
+    const reviewPath = `${folder}/intake-${timestamp}-${safeTitle}.md`;
 
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-");
+    await this.app.vault.adapter.mkdir(folder).catch(() => {});
 
-    const safeName = sanitizeFileName(file.basename);
-    const reviewPath = `${reviewFolder}/intake-${timestamp}-${safeName}.md`;
+    const proposal = data.proposal;
 
-    const markdown = formatProposalMarkdown(file, data);
+    const reviewBody = [
+      "---",
+      "ariadne_review: true",
+      "reviewFirst: true",
+      "mutated: false",
+      `source_note: ${JSON.stringify(file.path)}`,
+      `created: ${JSON.stringify(new Date().toISOString())}`,
+      "---",
+      "",
+      "# Ariadne Intake Proposal",
+      "",
+      "## Source",
+      "",
+      `- Title: ${title}`,
+      `- Path: ${file.path}`,
+      "",
+      "## Classification",
+      "",
+      proposal.classification || "",
+      "",
+      "## Summary",
+      "",
+      proposal.summary || "",
+      "",
+      "## Proposed Destination",
+      "",
+      proposal.proposedDestination || "",
+      "",
+      "## Proposed Tags",
+      "",
+      Array.isArray(proposal.proposedTags)
+        ? proposal.proposedTags.map(tag => `- ${tag}`).join("\n")
+        : "",
+      "",
+      "## Proposed Links",
+      "",
+      Array.isArray(proposal.proposedLinks)
+        ? proposal.proposedLinks.map(link => `- ${link}`).join("\n")
+        : "",
+      "",
+      "## Warnings",
+      "",
+      Array.isArray(proposal.warnings)
+        ? proposal.warnings.map(warning => `- ${warning}`).join("\n")
+        : "",
+      "",
+      "## Raw Proposal",
+      "",
+      "```json",
+      JSON.stringify(proposal, null, 2),
+      "```",
+      ""
+    ].join("\n");
 
-    await this.app.vault.create(reviewPath, markdown);
+    await this.app.vault.create(reviewPath, reviewBody);
 
     new Notice("Ariadne intake proposal written.");
   }
-
-  async ensureFolder(path) {
-    const parts = path.split("/");
-    let current = "";
-
-    for (const part of parts) {
-      current = current ? `${current}/${part}` : part;
-
-      if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current);
-      }
-    }
-  }
 };
-
-class AriadneSettingTab extends PluginSettingTab {
-  constructor(app, plugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  display() {
-    const { containerEl } = this;
-
-    containerEl.empty();
-
-    containerEl.createEl("h2", { text: "Ariadne Intake Settings" });
-
-    new Setting(containerEl)
-      .setName("Worker URL")
-      .setDesc("Base URL for the Mnemosyne Worker, without trailing slash.")
-      .addText(text =>
-        text
-          .setPlaceholder("https://your-worker.example.workers.dev")
-          .setValue(this.plugin.settings.workerUrl)
-          .onChange(async value => {
-            this.plugin.settings.workerUrl = value.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Ariadne passkey")
-      .setDesc("Passkey sent as both X-Matrix-Key and X-Ariadne-Key.")
-      .addText(text => {
-        text.inputEl.type = "password";
-
-        text
-          .setPlaceholder("Enter Ariadne passkey")
-          .setValue(this.plugin.settings.ariadnePasskey)
-          .onChange(async value => {
-            this.plugin.settings.ariadnePasskey = value.trim();
-            await this.plugin.saveSettings();
-          });
-      });
-  }
-}
