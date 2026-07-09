@@ -1,3 +1,4 @@
+console.log("MNEMOSYNE ARIADNE MAIN.JS LOADED");
 const { Plugin, Notice, PluginSettingTab, Setting } = require("obsidian");
 
 const DEFAULT_SETTINGS = {
