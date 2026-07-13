@@ -1,11 +1,13 @@
 {
   "name": "mnemosyne-ariadne",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Connect Obsidian to Ariadne Core",
-  "main": "lib/main.js",
+  "main": "main.js",
   "license": "MIT",
   "scripts": {
-    "build": "obsidian-plugin build src/main.ts && cp dist/main.js main.js",
+    "build": "obsidian-plugin build src/main.ts && cp dist/main.js main.js && cp dist/main.js ../main.js && cp manifest.json ../manifest.json && cp src/styles.css ../styles.css && node scripts/verify-release.cjs",
+    "check": "tsc --noEmit && node scripts/verify-source.cjs",
+    "test": "node tests/bundle.test.cjs",
     "dev": "obsidian-plugin dev src/main.ts"
   },
   "devDependencies": {
