@@ -263,6 +263,89 @@ class MnemosyneAriadneSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Connection")
+      .setDesc("Verify connectivity to the Mnemosyne Worker.")
+      .addButton((button) => {
+        button
+          .setButtonText("Test Connection")
+          .onClick(async () => {
+            const base =
+              this.plugin.settings.workerBaseUrl.replace(/\/+$/g, "");
+            const key =
+              this.plugin.settings.ariadnePasskey.trim();
+
+            if (!key) {
+              new Notice("No API key configured.");
+              return;
+            }
+
+            const started = performance.now();
+            button.setDisabled(true);
+            button.setButtonText("Connecting...");
+
+            const controller = new AbortController();
+            const timeout = window.setTimeout(
+              () => controller.abort(),
+              5000
+            );
+
+            try {
+              const response = await fetch(
+                `${base}/v1/memory/self`,
+                {
+                  method: "GET",
+                  headers: {
+                    "X-Matrix-Key": key,
+                    "X-Ariadne-Key": key
+                  },
+                  signal: controller.signal
+                }
+              );
+
+              const elapsed = Math.round(
+                performance.now() - started
+              );
+
+              if (!response.ok) {
+                const body = await response.text();
+                console.error("Ariadne connection failed:", body);
+
+                new Notice(
+                  `Mnemosyne connection failed: HTTP ${response.status} (${elapsed} ms)`
+                );
+                return;
+              }
+
+              const identity = await response.json();
+
+              new Notice(
+                `Connected as ${
+                  identity.principal_id ||
+                  identity.credential_id ||
+                  "Ariadne"
+                } (${elapsed} ms)`
+              );
+
+              console.log("Ariadne connection identity:", identity);
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.name === "AbortError"
+                    ? "Connection timed out after 5 seconds."
+                    : error.message
+                  : String(error);
+
+              console.error("Ariadne connection error:", error);
+              new Notice(`Mnemosyne connection error: ${message}`);
+            } finally {
+              window.clearTimeout(timeout);
+              button.setDisabled(false);
+              button.setButtonText("Test Connection");
+            }
+          });
+      });
+
+    new Setting(containerEl)
       .setName("Review folder")
       .setDesc("Where Ariadne proposal notes are written.")
       .addText((text) =>
