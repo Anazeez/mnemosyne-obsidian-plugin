@@ -10,7 +10,7 @@ import {
   requestUrl
 } from "obsidian";
 
-const BUILD_ID = "0.1.0-audit.1";
+const BUILD_ID = "0.1.0-audit.2";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const REQUIRED_FRONTMATTER = [
   "id",
@@ -541,7 +541,25 @@ ${this.mdList(review.warnings)}
 
   httpError(response: ApiResponse): string {
     const serverMessage = response.json?.error || response.json?.message;
-    return `HTTP ${response.status}${serverMessage ? `: ${serverMessage}` : ""}`;
+    const upstreamStatus = response.json?.details?.status;
+    const upstreamError = response.json?.details?.details?.error;
+    const upstreamMessage = upstreamError?.message;
+    const upstreamCode = upstreamError?.code || upstreamError?.type;
+    const detail = [
+      upstreamStatus ? `upstream HTTP ${upstreamStatus}` : "",
+      upstreamCode ? String(upstreamCode) : "",
+      upstreamMessage ? this.redactDiagnostic(String(upstreamMessage)) : ""
+    ].filter(Boolean).join(" · ");
+
+    return `HTTP ${response.status}${serverMessage ? `: ${serverMessage}` : ""}` +
+      `${detail ? ` (${detail})` : ""}`;
+  }
+
+  redactDiagnostic(value: string): string {
+    return value
+      .replace(/sk-[a-zA-Z0-9_-]+/g, "[redacted-key]")
+      .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+      .slice(0, 500);
   }
 
   parseJson(text: string): any {

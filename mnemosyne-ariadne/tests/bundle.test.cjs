@@ -91,6 +91,28 @@ async function main() {
     warnings: []
   }), true);
 
+  assert.strictEqual(
+    plugin.redactDiagnostic("Invalid key sk-secret-value in Bearer abc123"),
+    "Invalid key [redacted-key] in Bearer [redacted]"
+  );
+
+  assert.match(plugin.httpError({
+    status: 502,
+    text: "",
+    json: {
+      error: "openai_request_failed",
+      details: {
+        status: 429,
+        details: {
+          error: {
+            type: "insufficient_quota",
+            message: "Quota exceeded"
+          }
+        }
+      }
+    }
+  }), /upstream HTTP 429.*insufficient_quota.*Quota exceeded/);
+
   console.log("Bundle behavior verified.");
 }
 

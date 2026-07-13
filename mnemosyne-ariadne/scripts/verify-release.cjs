@@ -15,7 +15,7 @@ for (const file of ["main.js", "manifest.json", "styles.css"]) {
 const bundle = fs.readFileSync(path.join(repositoryRoot, "main.js"));
 const hash = crypto.createHash("sha256").update(bundle).digest("hex");
 
-if (!bundle.includes(Buffer.from("0.1.0-audit.1"))) {
+if (!bundle.includes(Buffer.from("0.1.0-audit.2"))) {
   throw new Error("Root bundle does not contain the expected build identifier.");
 }
 
