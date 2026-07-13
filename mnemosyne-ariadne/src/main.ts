@@ -47,6 +47,8 @@ export default class MnemosyneAriadnePlugin extends Plugin {
   }
 
   async processCurrentNote() {
+    new Notice("Ariadne command handler entered.");
+
     const file = this.app.workspace.getActiveFile();
 
     if (!file) {
