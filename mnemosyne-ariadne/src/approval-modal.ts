@@ -31,6 +31,15 @@ export class ApprovalModal extends Modal {
     this.contentEl.createEl("p", {
       text: "The source note will not be modified. Codex may write only inside System/Ariadne/Memory."
     });
+    const attachmentWarnings = this.review.attachments
+      .map((item) => item.warning)
+      .filter((warning): warning is string => Boolean(warning));
+    if (attachmentWarnings.length > 0) {
+      this.contentEl.createEl("p", {
+        text: `Attachment warnings (${attachmentWarnings.length}): ${attachmentWarnings.join(" · ")}`,
+        cls: "ariadne-error"
+      });
+    }
 
     new Setting(this.contentEl)
       .addButton((button) => button

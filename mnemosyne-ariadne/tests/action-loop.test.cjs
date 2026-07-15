@@ -116,7 +116,7 @@ async function main() {
 
   const stable = await bundle.captureStableNote(stableApp, new MockTFile("Inbox/Stable.md"), 0);
   assert.strictEqual(noteReadCount, 2);
-  assert.strictEqual(binaryReadCount, 1);
+  assert.strictEqual(binaryReadCount, 2);
   assert.strictEqual(stable.sourcePath, "Inbox/Stable.md");
   assert.strictEqual(stable.content, stableContent);
   assert.strictEqual(stable.sourceHash, await bundle.sha256Text(stableContent));
@@ -171,9 +171,33 @@ async function main() {
   assert.strictEqual(parsedReview.sourcePath, stable.sourcePath);
   assert.strictEqual(parsedReview.sourceHash, stable.sourceHash);
   assert.deepStrictEqual(parsedReview.allowedDomains, ["knowledge"]);
+  assert.deepStrictEqual(parsedReview.attachments, stable.attachments);
+
+  const changingBytes = [
+    new Uint8Array([1, 2, 3]).buffer,
+    new Uint8Array([1, 2, 4]).buffer
+  ];
+  const changingApp = {
+    vault: {
+      read: async () => "![[image.png]]",
+      readBinary: async () => changingBytes.shift()
+    },
+    metadataCache: { getFirstLinkpathDest: () => attachmentFile }
+  };
+  const changingCapture = await bundle.captureStableNote(
+    changingApp,
+    new MockTFile("Inbox/Changing-Attachment.md"),
+    0
+  );
+  assert.strictEqual(changingCapture.attachments[0].sha256, null);
+  assert.match(changingCapture.attachments[0].warning, /changed while Ariadne was reading/i);
 
   assert.throws(
     () => bundle.parseReviewArtifactV1("# Legacy review"),
+    (error) => error && error.code === "legacy_review_not_approvable"
+  );
+  assert.throws(
+    () => bundle.parseReviewArtifactV1("# Body only\n\nschema: ariadne.review/v1\noperation: incorporate_note\nstatus: proposed\nallowed_domains: knowledge"),
     (error) => error && error.code === "legacy_review_not_approvable"
   );
 

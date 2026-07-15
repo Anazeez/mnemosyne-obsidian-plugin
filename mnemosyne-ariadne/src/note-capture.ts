@@ -56,7 +56,8 @@ function mediaTypeFor(link: string): string | null {
 async function captureAttachments(
   app: App,
   content: string,
-  sourcePath: string
+  sourcePath: string,
+  delayMs: number
 ): Promise<AttachmentManifestEntry[]> {
   const entries: AttachmentManifestEntry[] = [];
 
@@ -77,15 +78,22 @@ async function captureAttachments(
     }
 
     try {
-      const bytes = await app.vault.readBinary(file);
+      const firstBytes = await app.vault.readBinary(file);
+      await wait(delayMs);
+      const secondBytes = await app.vault.readBinary(file);
+      const firstHash = await sha256Bytes(firstBytes);
+      const secondHash = await sha256Bytes(secondBytes);
+      const changed = firstHash !== secondHash;
       entries.push({
         link,
         path: file.path,
         exists: true,
         mediaType: mediaTypeFor(file.path),
-        size: file.stat.size,
-        sha256: await sha256Bytes(bytes),
-        warning: null
+        size: secondBytes.byteLength,
+        sha256: changed ? null : secondHash,
+        warning: changed
+          ? `Local attachment changed while Ariadne was reading it: ${link}`
+          : null
       });
     } catch (error) {
       entries.push({
@@ -138,6 +146,6 @@ export async function captureStableNote(
     sourcePath: file.path,
     content: second,
     sourceHash: secondHash,
-    attachments: await captureAttachments(app, second, file.path)
+    attachments: await captureAttachments(app, second, file.path, delayMs)
   };
 }

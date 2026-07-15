@@ -50,6 +50,7 @@ export interface ReviewArtifactV1 {
   sourceHash: string;
   allowedDomains: ["knowledge"];
   buildId: string;
+  attachments: AttachmentManifestEntry[];
 }
 
 export interface WorkOrderInput {
@@ -107,7 +108,12 @@ export async function sha256Bytes(value: BufferSource): Promise<string> {
 }
 
 function canonicalPath(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\/+/, "");
+  const normalized = value.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized || normalized === ".." || normalized.startsWith("../") ||
+      normalized.includes("/../") || normalized.includes("/./") || normalized.endsWith("/.")) {
+    throw new ContractError("invalid_artifact", "Artifact path is unsafe.");
+  }
+  return normalized;
 }
 
 function yamlString(value: string): string {
@@ -120,7 +126,17 @@ function mdList(items: string[]): string {
 
 function frontmatterValue(markdown: string, key: string): string | null {
   const normalized = canonicalText(markdown);
-  const match = normalized.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+  const lines = normalized.split("\n");
+  if (lines[0] !== "---") return null;
+  const end = lines.indexOf("---", 1);
+  if (end < 0) return null;
+  const frontmatter = lines.slice(1, end).join("\n");
+  const expression = new RegExp(`^${key}:\\s*(.+)$`, "gm");
+  const matches: RegExpExecArray[] = [];
+  let current: RegExpExecArray | null;
+  while ((current = expression.exec(frontmatter)) !== null) matches.push(current);
+  if (matches.length > 1) throw new ContractError("invalid_artifact", `Duplicate ${key}.`);
+  const match = matches[0];
   if (!match) return null;
   const value = match[1].trim();
 
@@ -204,6 +220,12 @@ ${mdList(review.warnings)}
 
 ${mdList(attachmentWarnings)}
 
+## Attachment manifest
+
+\`\`\`json
+${JSON.stringify(input.attachments)}
+\`\`\`
+
 ## Safety
 
 - reviewFirst: true
@@ -228,6 +250,18 @@ export function parseReviewArtifactV1(markdown: string): ReviewArtifactV1 {
     throw new ContractError("invalid_artifact", "Review action fields are invalid.");
   }
 
+  const manifestMatch = canonicalText(markdown).match(/## Attachment manifest\s+\`\`\`json\n([^\n]+)\n\`\`\`/);
+  if (!manifestMatch) throw new ContractError("invalid_artifact", "Missing attachment manifest.");
+  let attachments: AttachmentManifestEntry[];
+  try {
+    attachments = JSON.parse(manifestMatch[1]);
+  } catch {
+    throw new ContractError("invalid_artifact", "Attachment manifest is invalid JSON.");
+  }
+  if (!Array.isArray(attachments)) {
+    throw new ContractError("invalid_artifact", "Attachment manifest must be an array.");
+  }
+
   return {
     schema: "ariadne.review/v1",
     id: requireValue(markdown, "id"),
@@ -237,7 +271,8 @@ export function parseReviewArtifactV1(markdown: string): ReviewArtifactV1 {
     sourcePath: canonicalPath(requireValue(markdown, "source_path")),
     sourceHash: requireValue(markdown, "source_hash").toLowerCase(),
     allowedDomains: ["knowledge"],
-    buildId: requireValue(markdown, "build_id")
+    buildId: requireValue(markdown, "build_id"),
+    attachments
   };
 }
 

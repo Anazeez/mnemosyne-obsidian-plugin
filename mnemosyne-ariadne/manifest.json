@@ -1,7 +1,7 @@
 {
   "id": "mnemosyne-ariadne",
   "name": "Mnemosyne Ariadne",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
   "description": "Review, index, and query Mnemosyne without silently mutating source notes.",
   "author": "Project Mnemosyne",

@@ -1,6 +1,6 @@
 {
   "name": "mnemosyne-ariadne",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connect Obsidian to Ariadne Core",
   "main": "main.js",
   "license": "MIT",

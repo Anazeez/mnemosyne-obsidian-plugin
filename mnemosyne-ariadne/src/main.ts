@@ -37,7 +37,7 @@ export {
 } from "./action-contracts";
 export { captureStableNote } from "./note-capture";
 
-const BUILD_ID = "0.1.0-audit.2";
+const BUILD_ID = "0.2.0-action.1";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const REQUIRED_FRONTMATTER = [
   "id",
