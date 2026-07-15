@@ -1,12 +1,14 @@
 {
   "name": "mnemosyne-ariadne",
-  "version": "0.0.1",
-  "description": "Connect Obsidian to Ariadne Core",
-  "main": "lib/main.js",
+  "version": "0.0.4",
+  "description": "Review-first Ariadne intake and deterministic Mnemosyne continuity",
+  "main": "main.js",
   "license": "MIT",
   "scripts": {
-    "build": "obsidian-plugin build src/main.ts && cp dist/main.js main.js",
-    "dev": "obsidian-plugin dev src/main.ts"
+    "build": "obsidian-plugin build src/main.ts --output-dir .",
+    "postbuild": "node scripts/finalize-build.cjs",
+    "dev": "obsidian-plugin dev src/main.ts",
+    "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {
     "typescript": "^4.1.5",

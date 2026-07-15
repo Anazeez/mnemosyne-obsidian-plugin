@@ -1,9 +1,9 @@
 {
   "id": "mnemosyne-ariadne",
   "name": "Mnemosyne Ariadne",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "minAppVersion": "1.5.0",
-  "description": "Ariadne intake proposal writer for Mnemosyne.",
+  "description": "Review-first Ariadne intake and deterministic contextual runway client.",
   "author": "Project Mnemosyne",
   "authorUrl": "",
   "fundingUrl": "",
