@@ -1,0 +1,1 @@
+.mnemosyne-ariadne-status{padding:8px;border-inline-start:3px solid var(--interactive-accent);white-space:pre-wrap}.mnemosyne-ariadne-status[data-context-status=degraded],.mnemosyne-ariadne-status[data-context-status=stale]{border-inline-start-color:var(--text-warning)}

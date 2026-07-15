@@ -1,6 +1,24 @@
 # Mnemosyne Ariadne
 
-Connect Obsidian to Ariadne Core
+Connect Obsidian to Ariadne Core and Mnemosyne's deterministic contextual
+continuity API without silently changing source notes or sealed Runway copies.
+
+## Contextual continuity commands
+
+- Show the latest exact Runway and status.
+- Create a review-first checkpoint proposal under
+  `System/Mnemosyne/Runway-Proposals/`.
+- Explicitly submit a reviewed proposal after verifying its source hash.
+- Rehydrate exact context before displaying supplemental memory evidence.
+- Compare the active note hash to the latest Runway.
+- Open a separate lineage report.
+
+The Worker URL, identity, project, and scope are explicit settings. No endpoint
+or credential is embedded in the release. Published local Runway files under
+`System/Mnemosyne/Runways/` are created once and never modified by the plugin.
+Checkpoint submission also requires the Worker-side
+`CONTINUITY_OBSIDIAN_ACTIONS` gate; a successful candidate response is not
+publication, activation, or deployment.
 
 ## Contributing
 
@@ -21,6 +39,12 @@ npm run dev
 _Note: If you haven't already installed the hot-reload-plugin you'll be prompted to. You need to enable that plugin in your obsidian vault before hot-reloading will start. You might need to refresh your plugin list for it to show up._
 
 ### Releasing
+
+Run deterministic contract tests:
+
+```
+npm test
+```
 
 To start a release build run the following command:
 
