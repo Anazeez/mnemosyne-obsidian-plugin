@@ -141,6 +141,125 @@ async function main() {
     }
   ]);
 
+  const reviewId = await bundle.deriveReviewId(stable.sourcePath, stable.sourceHash);
+  const reviewMarkdown = bundle.formatReviewArtifactV1({
+    reviewId,
+    createdAt: "2026-07-14T12:00:00.000Z",
+    sourcePath: stable.sourcePath,
+    sourceHash: stable.sourceHash,
+    attachments: stable.attachments,
+    buildId: "0.2.0-action.1",
+    review: {
+      summary: "Stable summary",
+      quality: "Good",
+      ambiguities: [],
+      missingInformation: [],
+      duplicateRisk: "Low",
+      suggestedTags: ["stable"],
+      suggestedLinks: [],
+      suggestedDestination: "Knowledge/Stable.md",
+      confidence: 0.9,
+      warnings: []
+    }
+  });
+  const parsedReview = bundle.parseReviewArtifactV1(reviewMarkdown);
+
+  assert.strictEqual(parsedReview.schema, "ariadne.review/v1");
+  assert.strictEqual(parsedReview.id, reviewId);
+  assert.strictEqual(parsedReview.status, "proposed");
+  assert.strictEqual(parsedReview.operation, "incorporate_note");
+  assert.strictEqual(parsedReview.sourcePath, stable.sourcePath);
+  assert.strictEqual(parsedReview.sourceHash, stable.sourceHash);
+  assert.deepStrictEqual(parsedReview.allowedDomains, ["knowledge"]);
+
+  assert.throws(
+    () => bundle.parseReviewArtifactV1("# Legacy review"),
+    (error) => error && error.code === "legacy_review_not_approvable"
+  );
+
+  const reviewHash = await bundle.sha256Text(reviewMarkdown);
+  const jobId = await bundle.deriveJobId(
+    "incorporate_note",
+    stable.sourcePath,
+    stable.sourceHash,
+    reviewHash
+  );
+  const workOrderMarkdown = bundle.formatWorkOrderV1({
+    id: jobId,
+    createdAt: "2026-07-14T12:01:00.000Z",
+    approvedAt: "2026-07-14T12:01:00.000Z",
+    sourcePath: stable.sourcePath,
+    sourceHash: stable.sourceHash,
+    reviewArtifact: "System/Ariadne/Review/review-stable.md",
+    reviewHash,
+    capture: stable,
+    reviewMarkdown
+  });
+  const parsedWorkOrder = bundle.parseWorkOrderV1(workOrderMarkdown);
+
+  assert.strictEqual(parsedWorkOrder.schema, "ariadne.work-order/v1");
+  assert.strictEqual(parsedWorkOrder.id, jobId);
+  assert.strictEqual(parsedWorkOrder.operation, "incorporate_note");
+  assert.strictEqual(parsedWorkOrder.status, "queued");
+  assert.deepStrictEqual(parsedWorkOrder.allowedDomains, ["knowledge"]);
+  assert.deepStrictEqual(parsedWorkOrder.capture, stable);
+  assert.strictEqual(parsedWorkOrder.reviewMarkdown, reviewMarkdown);
+
+  const reviewFile = new MockTFile("System/Ariadne/Review/review-stable.md");
+  const sourceFile = new MockTFile(stable.sourcePath);
+  const contents = new Map([
+    [reviewFile.path, reviewMarkdown],
+    [sourceFile.path, stableContent]
+  ]);
+  const files = new Map([
+    [reviewFile.path, reviewFile],
+    [sourceFile.path, sourceFile]
+  ]);
+  const created = [];
+  const approvalApp = {
+    workspace: { getActiveFile: () => reviewFile },
+    metadataCache: { getFirstLinkpathDest: () => null },
+    vault: {
+      read: async (file) => contents.get(file.path),
+      readBinary: async () => new ArrayBuffer(0),
+      getAbstractFileByPath: (filePath) => files.get(filePath) || null,
+      createFolder: async (folderPath) => files.set(folderPath, { path: folderPath }),
+      create: async (filePath, content) => {
+        const file = new MockTFile(filePath);
+        files.set(filePath, file);
+        contents.set(filePath, content);
+        created.push(filePath);
+        return file;
+      }
+    }
+  };
+  const ApprovalPlugin = bundle.default;
+  const approvalPlugin = new ApprovalPlugin(approvalApp);
+  await approvalPlugin.onload();
+  approvalPlugin.stableReadDelayMs = 0;
+
+  const queued = await approvalPlugin.approveReview(reviewFile);
+  assert.strictEqual(queued.duplicate, false);
+  assert.strictEqual(created.filter((item) => item === queued.queuePath).length, 1);
+  assert.strictEqual(contents.get(sourceFile.path), stableContent);
+
+  const duplicate = await approvalPlugin.approveReview(reviewFile);
+  assert.strictEqual(duplicate.duplicate, true);
+  assert.strictEqual(created.filter((item) => item === queued.queuePath).length, 1);
+
+  contents.set(sourceFile.path, "# Changed after review");
+  await assert.rejects(
+    () => approvalPlugin.approveReview(reviewFile),
+    /source_changed_since_review/
+  );
+
+  contents.set(sourceFile.path, stableContent);
+  contents.set(queued.queuePath, "# conflicting content");
+  await assert.rejects(
+    () => approvalPlugin.approveReview(reviewFile),
+    /duplicate_job_conflict/
+  );
+
   console.log("Action-loop contracts verified.");
 }
 

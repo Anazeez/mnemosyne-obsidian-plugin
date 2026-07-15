@@ -9,6 +9,7 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), 
 const requiredCommands = [
   "ariadne-test-connection",
   "ariadne-review-current-note",
+  "ariadne-approve-current-review",
   "ariadne-index-current-note",
   "ariadne-query-mnemosyne"
 ];
@@ -27,8 +28,17 @@ for (const route of [
 }
 
 if (!source.includes("requestUrl(")) throw new Error("Mobile-safe requestUrl is required.");
+if (!source.includes("System/Ariadne/Runtime/Queue")) {
+  throw new Error("Missing approved work-order queue path.");
+}
 if (source.includes("vault.modify(") || source.includes("vault.delete(")) {
   throw new Error("Source-note mutation API detected.");
+}
+for (const forbidden of [
+  "danger-full-access",
+  "dangerously-bypass-approvals-and-sandbox"
+]) {
+  if (source.includes(forbidden)) throw new Error(`Forbidden execution mode: ${forbidden}`);
 }
 if (manifest.version !== packageJson.version) {
   throw new Error("Manifest and package versions do not match.");

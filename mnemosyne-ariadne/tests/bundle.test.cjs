@@ -49,6 +49,7 @@ async function main() {
     [
       "ariadne-test-connection",
       "ariadne-review-current-note",
+      "ariadne-approve-current-review",
       "ariadne-index-current-note",
       "ariadne-query-mnemosyne"
     ]

@@ -10,10 +10,28 @@ import {
   requestUrl
 } from "obsidian";
 
+import {
+  ContractError,
+  StableCapture,
+  deriveJobId,
+  deriveReviewId,
+  formatReviewArtifactV1,
+  formatWorkOrderV1,
+  parseReviewArtifactV1,
+  parseWorkOrderV1,
+  sha256Text
+} from "./action-contracts";
+import { ApprovalModal } from "./approval-modal";
+import { CaptureError, captureStableNote } from "./note-capture";
+
 export {
   canonicalText,
   deriveJobId,
   deriveReviewId,
+  formatReviewArtifactV1,
+  formatWorkOrderV1,
+  parseReviewArtifactV1,
+  parseWorkOrderV1,
   sha256Bytes,
   sha256Text
 } from "./action-contracts";
@@ -35,10 +53,13 @@ const REQUIRED_FRONTMATTER = [
 
 type WorkflowStage =
   | "note read"
+  | "note capture"
   | "request sent"
   | "response received"
   | "validation"
-  | "artifact written";
+  | "artifact written"
+  | "approval validation"
+  | "queue write";
 
 interface MnemosyneAriadneSettings {
   workerBaseUrl: string;
@@ -91,6 +112,7 @@ class WorkflowError extends Error {
 export default class MnemosyneAriadnePlugin extends Plugin {
   settings: MnemosyneAriadneSettings;
   connectionIdentity: Identity | null = null;
+  stableReadDelayMs = 1_000;
 
   async onload() {
     await this.loadSettings();
@@ -111,6 +133,23 @@ export default class MnemosyneAriadnePlugin extends Plugin {
         "Review",
         () => this.reviewCurrentNote()
       )
+    });
+
+    this.addCommand({
+      id: "ariadne-approve-current-review",
+      name: "Ariadne: Approve current review",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const reviewFolder = normalizePath(this.settings.reviewFolder).replace(/\/+$/g, "");
+        const available = file instanceof TFile &&
+          file.extension === "md" &&
+          file.path.startsWith(`${reviewFolder}/`);
+
+        if (available && !checking) {
+          void this.runSafely("Approval", () => this.openApproval(file));
+        }
+        return available;
+      }
     });
 
     this.addCommand({
@@ -192,7 +231,21 @@ export default class MnemosyneAriadnePlugin extends Plugin {
   }
 
   async reviewCurrentNote(): Promise<void> {
-    const { file, content } = await this.readCurrentNote();
+    const file = this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      throw new WorkflowError("note read", "Open a Markdown note first.");
+    }
+
+    let capture: StableCapture;
+    try {
+      capture = await captureStableNote(this.app, file, this.stableReadDelayMs);
+    } catch (error) {
+      if (error instanceof CaptureError) {
+        throw new WorkflowError("note capture", `${error.code}: ${error.message}`);
+      }
+      throw error;
+    }
+
     new Notice("Ariadne Review — note read; sending request…");
 
     const response = await this.apiRequest(
@@ -200,7 +253,7 @@ export default class MnemosyneAriadnePlugin extends Plugin {
       "POST",
       {
         title: file.basename,
-        content,
+        content: capture.content,
         currentLocation: file.path,
         metadata: { vaultPath: file.path },
         reviewFirst: true
@@ -225,8 +278,118 @@ export default class MnemosyneAriadnePlugin extends Plugin {
       );
     }
 
-    const path = await this.writeReviewArtifact(file, data);
+    const path = await this.writeReviewArtifact(file, capture, data);
     new Notice(`Ariadne Review complete — artifact written: ${path}`, 10_000);
+  }
+
+  async approveReview(reviewFile: TFile): Promise<{
+    jobId: string;
+    queuePath: string;
+    duplicate: boolean;
+  }> {
+    let reviewMarkdown: string;
+    try {
+      reviewMarkdown = await this.app.vault.read(reviewFile);
+    } catch (error) {
+      throw new WorkflowError("approval validation", this.errorMessage(error));
+    }
+
+    let review;
+    try {
+      review = parseReviewArtifactV1(reviewMarkdown);
+    } catch (error) {
+      const code = error instanceof ContractError ? error.code : "invalid_artifact";
+      throw new WorkflowError("approval validation", `${code}: ${this.errorMessage(error)}`);
+    }
+
+    const sourceFile = this.app.vault.getAbstractFileByPath(review.sourcePath);
+    if (!(sourceFile instanceof TFile)) {
+      throw new WorkflowError(
+        "approval validation",
+        `source_not_found: ${review.sourcePath}`
+      );
+    }
+
+    let capture: StableCapture;
+    try {
+      capture = await captureStableNote(this.app, sourceFile, this.stableReadDelayMs);
+    } catch (error) {
+      const code = error instanceof CaptureError ? error.code : "note_read_failed";
+      throw new WorkflowError("approval validation", `${code}: ${this.errorMessage(error)}`);
+    }
+
+    if (capture.sourceHash !== review.sourceHash) {
+      throw new WorkflowError(
+        "approval validation",
+        "source_changed_since_review: The note changed after Review. Run Review again."
+      );
+    }
+
+    const reviewHash = await sha256Text(reviewMarkdown);
+    const jobId = await deriveJobId(
+      "incorporate_note",
+      capture.sourcePath,
+      capture.sourceHash,
+      reviewHash
+    );
+    const now = new Date().toISOString();
+    const queueFolder = "System/Ariadne/Runtime/Queue";
+    const queuePath = normalizePath(`${queueFolder}/${jobId}.md`);
+    const workOrder = formatWorkOrderV1({
+      id: jobId,
+      createdAt: now,
+      approvedAt: now,
+      sourcePath: capture.sourcePath,
+      sourceHash: capture.sourceHash,
+      reviewArtifact: reviewFile.path,
+      reviewHash,
+      capture,
+      reviewMarkdown
+    });
+
+    try {
+      await this.ensureFolder(queueFolder);
+      const existing = this.app.vault.getAbstractFileByPath(queuePath);
+      if (existing) {
+        if (!(existing instanceof TFile)) {
+          throw new WorkflowError("queue write", `duplicate_job_conflict: ${queuePath}`);
+        }
+        const existingContent = await this.app.vault.read(existing);
+        let existingOrder;
+        try {
+          existingOrder = parseWorkOrderV1(existingContent);
+        } catch {
+          throw new WorkflowError("queue write", `duplicate_job_conflict: ${queuePath}`);
+        }
+        if (
+          existingOrder.id !== jobId ||
+          existingOrder.sourceHash !== capture.sourceHash ||
+          existingOrder.reviewHash !== reviewHash
+        ) {
+          throw new WorkflowError("queue write", `duplicate_job_conflict: ${queuePath}`);
+        }
+        new Notice(`Ariadne approval already queued: ${queuePath}`, 10_000);
+        return { jobId, queuePath, duplicate: true };
+      }
+
+      await this.app.vault.create(queuePath, workOrder);
+      new Notice(`Ariadne approved — work order queued: ${queuePath}`, 10_000);
+      return { jobId, queuePath, duplicate: false };
+    } catch (error) {
+      if (error instanceof WorkflowError) throw error;
+      throw new WorkflowError("queue write", this.errorMessage(error));
+    }
+  }
+
+  async openApproval(reviewFile: TFile): Promise<void> {
+    try {
+      const markdown = await this.app.vault.read(reviewFile);
+      const review = parseReviewArtifactV1(markdown);
+      new ApprovalModal(this.app, this, reviewFile, review).open();
+    } catch (error) {
+      const code = error instanceof ContractError ? error.code : "invalid_artifact";
+      throw new WorkflowError("approval validation", `${code}: ${this.errorMessage(error)}`);
+    }
   }
 
   async indexCurrentNote(): Promise<void> {
@@ -432,7 +595,7 @@ export default class MnemosyneAriadnePlugin extends Plugin {
       .join("");
   }
 
-  async writeReviewArtifact(file: TFile, data: any): Promise<string> {
+  async writeReviewArtifact(file: TFile, capture: StableCapture, data: any): Promise<string> {
     const folder = normalizePath(
       this.settings.reviewFolder.replace(/^\/+|\/+$/g, "")
     );
@@ -442,70 +605,20 @@ export default class MnemosyneAriadnePlugin extends Plugin {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const safeName = file.basename.replace(/[^a-zA-Z0-9_-]/g, "-");
       const reviewPath = normalizePath(`${folder}/review-${stamp}-${safeName}.md`);
-      await this.app.vault.create(reviewPath, this.formatReviewArtifact(file.path, data));
+      const reviewId = await deriveReviewId(capture.sourcePath, capture.sourceHash);
+      await this.app.vault.create(reviewPath, formatReviewArtifactV1({
+        reviewId,
+        createdAt: new Date().toISOString(),
+        sourcePath: capture.sourcePath,
+        sourceHash: capture.sourceHash,
+        attachments: capture.attachments,
+        buildId: BUILD_ID,
+        review: data.review
+      }));
       return reviewPath;
     } catch (error) {
       throw new WorkflowError("artifact written", this.errorMessage(error));
     }
-  }
-
-  formatReviewArtifact(originalPath: string, data: any): string {
-    const review = data.review;
-
-    return `# Ariadne Review Proposal
-
-## Original file path
-
-${originalPath}
-
-## Summary
-
-${review.summary}
-
-## Quality
-
-${review.quality}
-
-## Ambiguities
-
-${this.mdList(review.ambiguities)}
-
-## Missing information
-
-${this.mdList(review.missingInformation)}
-
-## Duplicate risk
-
-${review.duplicateRisk}
-
-## Suggested tags
-
-${this.mdList(review.suggestedTags)}
-
-## Suggested links
-
-${this.mdList(review.suggestedLinks)}
-
-## Suggested destination
-
-${review.suggestedDestination}
-
-## Confidence
-
-${review.confidence}
-
-## Warnings
-
-${this.mdList(review.warnings)}
-
-## Safety
-
-- reviewFirst: true
-- mutated: false
-- approval required: true
-- source note modified: false
-- Ariadne build: ${BUILD_ID}
-`;
   }
 
   isValidReview(review: any): boolean {
@@ -522,12 +635,6 @@ ${this.mdList(review.warnings)}
       typeof review.confidence === "number" &&
       Array.isArray(review.warnings)
     );
-  }
-
-  mdList(items: unknown): string {
-    return Array.isArray(items) && items.length > 0
-      ? items.map((item) => `- ${String(item)}`).join("\n")
-      : "- None";
   }
 
   async ensureFolder(folder: string): Promise<void> {
