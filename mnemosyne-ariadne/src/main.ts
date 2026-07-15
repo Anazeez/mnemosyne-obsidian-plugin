@@ -133,6 +133,22 @@ export default class MnemosyneAriadnePlugin extends Plugin {
     }
   }
 
+  async testConnection() {
+    return this.run("mnemosyne.connection", async () => {
+      this.requireConfiguration();
+      const started = performance.now();
+      const identity = await this.requestJson("/v1/memory/self");
+      const elapsed = Math.round(performance.now() - started);
+      const principal =
+        typeof identity?.principal_id === "string"
+          ? identity.principal_id
+          : typeof identity?.credential_id === "string"
+            ? identity.credential_id
+            : "authenticated principal";
+      new Notice(`Connected as ${principal} (${elapsed} ms)`);
+    });
+  }
+
   private async latest() {
     const scope = this.requireConfiguration();
     const query = new URLSearchParams(scope).toString();
@@ -445,6 +461,21 @@ class MnemosyneAriadneSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+    new Setting(containerEl)
+      .setName("Connection")
+      .setDesc("Verify the configured Worker without exposing response bodies.")
+      .addButton(button => button
+        .setButtonText("Test Connection")
+        .onClick(async () => {
+          button.setDisabled(true);
+          button.setButtonText("Connecting...");
+          try {
+            await this.plugin.testConnection();
+          } finally {
+            button.setDisabled(false);
+            button.setButtonText("Test Connection");
+          }
+        }));
     this.addText("Identity", "Exact canonical credential identity.", "identityId");
     this.addText("Project", "Explicit continuity project.", "projectId");
     this.addText("Scope", "Bounded exact Runway scope.", "scopeKey");

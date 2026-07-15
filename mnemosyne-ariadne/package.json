@@ -14,5 +14,8 @@
     "typescript": "^4.1.5",
     "obsidian-plugin-cli": "^0.4.3",
     "obsidian": "obsidianmd/obsidian-api"
+  },
+  "allowScripts": {
+    "esbuild@0.8.57": true
   }
 }

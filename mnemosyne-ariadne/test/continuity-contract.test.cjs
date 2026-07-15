@@ -170,6 +170,15 @@ test("plugin registers the six review-first continuity commands without editing 
   assert.match(source, /CONTINUITY_OBSIDIAN_ACTIONS/);
 });
 
+test("connection verification preserves main behavior without endpoint or response leakage", () => {
+  const source = readFileSync("src/main.ts", "utf8");
+  assert.match(source, /setName\("Connection"\)/);
+  assert.match(source, /requestJson\("\/v1\/memory\/self"\)/);
+  assert.match(source, /workerBaseUrl: ""/);
+  assert.doesNotMatch(source, /izeesub\.workers\.dev/);
+  assert.doesNotMatch(source, /response\.text\(\)/);
+});
+
 test("package, manifest, mobile support, and build entry are aligned", () => {
   const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
   const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
