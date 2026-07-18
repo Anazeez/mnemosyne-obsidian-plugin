@@ -138,18 +138,9 @@ export default class MnemosyneAriadnePlugin extends Plugin {
     this.addCommand({
       id: "ariadne-approve-current-review",
       name: "Ariadne: Approve current review",
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        const reviewFolder = normalizePath(this.settings.reviewFolder).replace(/\/+$/g, "");
-        const available = file instanceof TFile &&
-          file.extension === "md" &&
-          file.path.startsWith(`${reviewFolder}/`);
-
-        if (available && !checking) {
-          void this.runSafely("Approval", () => this.openApproval(file));
-        }
-        return available;
-      }
+      callback: () => void this.runSafely("Approval", async () => {
+        await this.openApproval(this.requireCurrentReview());
+      })
     });
 
     this.addCommand({
@@ -170,6 +161,23 @@ export default class MnemosyneAriadnePlugin extends Plugin {
 
     this.addSettingTab(new MnemosyneAriadneSettingTab(this.app, this));
     console.info(`[Ariadne] loaded build ${BUILD_ID}`);
+  }
+
+  requireCurrentReview(): TFile {
+    const file = this.app.workspace.getActiveFile();
+    const reviewFolder = normalizePath(this.settings.reviewFolder).replace(/\/+$/g, "");
+    const available = file instanceof TFile &&
+      file.extension === "md" &&
+      file.path.startsWith(`${reviewFolder}/`);
+
+    if (!available) {
+      throw new WorkflowError(
+        "approval validation",
+        `Open an Ariadne review proposal from ${reviewFolder} first.`
+      );
+    }
+
+    return file;
   }
 
   currentNoteCommand(

@@ -55,6 +55,12 @@ async function main() {
     ]
   );
 
+  const approvalCommand = plugin.commands.find(
+    (command) => command.id === "ariadne-approve-current-review"
+  );
+  assert.strictEqual(typeof approvalCommand.callback, "function");
+  assert.strictEqual(approvalCommand.checkCallback, undefined);
+
   const body = "# Deterministic section\n\nThis body is long enough to index safely.";
   const hash = crypto.createHash("sha256").update(body.trim()).digest("hex");
   const content = `---\n` +
